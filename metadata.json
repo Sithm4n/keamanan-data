@@ -1,0 +1,6 @@
+{
+  "name": "AwanPay Security Module",
+  "description": "Corporate Digital Wallet Security Module prototype with MFA TOTP/Biometric gating, RBAC and ABAC transaction policy engine, and enterprise security audit logging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
