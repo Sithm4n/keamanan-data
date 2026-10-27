@@ -9,13 +9,14 @@ import {
   Lock,
   Users,
   Database,
+  Code2,
 } from 'lucide-react';
 import { UserProfile } from '../types/security';
 
 interface HeaderProps {
   currentUser: UserProfile;
-  activeTab: 'transaction' | 'audit_logs' | 'architecture';
-  setActiveTab: (tab: 'transaction' | 'audit_logs' | 'architecture') => void;
+  activeTab: 'transaction' | 'audit_logs' | 'architecture' | 'code_reference';
+  setActiveTab: (tab: 'transaction' | 'audit_logs' | 'architecture' | 'code_reference') => void;
   onLogout: () => void;
   simulatorOpen: boolean;
   setSimulatorOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -90,6 +91,18 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <BookOpen className="w-3.5 h-3.5" />
               Spesifikasi RBAC vs ABAC
+            </button>
+
+            <button
+              onClick={() => setActiveTab('code_reference')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                activeTab === 'code_reference'
+                  ? 'bg-blue-50 text-blue-700 shadow-xs border border-blue-200/80'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5 text-blue-600" />
+              Inspeksi Kode &amp; SQL Supabase
             </button>
           </nav>
 

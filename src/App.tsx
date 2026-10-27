@@ -32,6 +32,7 @@ import { PolicyInspector } from './components/PolicyInspector';
 import { MfaModal } from './components/MfaModal';
 import { AuditLogViewer } from './components/AuditLogViewer';
 import { ArchitectureDrawer } from './components/ArchitectureDrawer';
+import { CodeExplorerTab } from './components/CodeExplorerTab';
 import { LoginModal } from './components/LoginModal';
 import { StaffManagementModal } from './components/StaffManagementModal';
 import { TopUpModal } from './components/TopUpModal';
@@ -43,6 +44,8 @@ import {
   saveUserToSupabase,
   deleteUserFromSupabase,
   seedUsersToSupabase,
+  fetchTransactionsFromSupabase,
+  subscribeToTransactions,
 } from './lib/supabase';
 
 export default function App() {
@@ -63,7 +66,7 @@ export default function App() {
 
   // Authentication State: Defaults to Naja (Finance Staff)
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(MOCK_USERS[0]);
-  const [activeTab, setActiveTab] = useState<'transaction' | 'audit_logs' | 'architecture'>('transaction');
+  const [activeTab, setActiveTab] = useState<'transaction' | 'audit_logs' | 'architecture' | 'code_reference'>('transaction');
 
   // Corporate Cash Balance: Stateful, decreases when transaction is APPROVED
   const [corporateBalance, setCorporateBalance] = useState<number>(1_450_800_000);
@@ -103,6 +106,76 @@ export default function App() {
 
   // Audit Logs State
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
+  const [isLiveSyncActive, setIsLiveSyncActive] = useState<boolean>(true);
+
+  // REALTIME MULTI-DEVICE SYNC:
+  // 1. Initial fetch from Supabase
+  // 2. Realtime WebSocket subscription (INSERT, UPDATE, DELETE)
+  // 3. 2.5s Polling fallback (guarantees sync across different devices even if Realtime replication is off)
+  useEffect(() => {
+    let isMounted = true;
+
+    // A. Initial load
+    fetchTransactionsFromSupabase().then((res) => {
+      if (isMounted && res.success && res.transactions.length > 0) {
+        setAuditLogs(res.transactions);
+      }
+    });
+
+    // B. Realtime WebSocket listener
+    const unsubscribe = subscribeToTransactions((changedEntry, eventType) => {
+      if (!isMounted) return;
+      setAuditLogs((prev) => {
+        if (eventType === 'INSERT') {
+          // If already exists (e.g. submitted locally), update it; otherwise prepend
+          const exists = prev.some((p) => p.referenceNo === changedEntry.referenceNo);
+          if (exists) {
+            return prev.map((p) => (p.referenceNo === changedEntry.referenceNo ? changedEntry : p));
+          }
+          return [changedEntry, ...prev];
+        } else if (eventType === 'UPDATE') {
+          return prev.map((p) => (p.referenceNo === changedEntry.referenceNo ? changedEntry : p));
+        } else if (eventType === 'DELETE') {
+          return prev.filter(
+            (p) => p.id !== changedEntry.id && p.referenceNo !== changedEntry.referenceNo
+          );
+        }
+        return prev;
+      });
+    });
+
+    // C. 2.5-second polling fallback for cross-device sync guarantee
+    const interval = setInterval(() => {
+      fetchTransactionsFromSupabase().then((res) => {
+        if (!isMounted || !res.success) return;
+
+        setAuditLogs((prev) => {
+          // If server has data and local is empty or different length
+          if (prev.length !== res.transactions.length) {
+            return res.transactions;
+          }
+          // Check if any transaction reference or status changed
+          const isDifferent = res.transactions.some((serverTx, idx) => {
+            const localTx = prev[idx];
+            return (
+              !localTx ||
+              localTx.referenceNo !== serverTx.referenceNo ||
+              localTx.status !== serverTx.status ||
+              localTx.primaryReason !== serverTx.primaryReason
+            );
+          });
+
+          return isDifferent ? res.transactions : prev;
+        });
+      });
+    }, 2500);
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, []);
 
   // MFA Modal State
   const [isMfaOpen, setIsMfaOpen] = useState(false);
@@ -774,11 +847,21 @@ export default function App() {
             currentUserRole={currentUser.role}
             onApprovePending={handleApprovePending}
             onDenyPending={handleDenyPending}
+            onRefresh={() => {
+              fetchTransactionsFromSupabase().then((res) => {
+                if (res.success) {
+                  setAuditLogs(res.transactions);
+                }
+              });
+            }}
           />
         )}
 
         {/* Tab 3: RBAC vs ABAC Architecture Specs */}
         {activeTab === 'architecture' && <ArchitectureDrawer />}
+
+        {/* Tab 4: Code Inspection (MFA, RBAC, ABAC) & Supabase SQL Scripts */}
+        {activeTab === 'code_reference' && <CodeExplorerTab />}
       </main>
 
       {/* MFA Modal (Triggered for amounts > Rp 10.000.000) */}

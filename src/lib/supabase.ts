@@ -430,3 +430,152 @@ export async function seedUsersToSupabase(users: UserProfile[]): Promise<Supabas
     };
   }
 }
+
+/**
+ * Convert a Supabase database row to an AuditLogEntry
+ */
+export function mapRowToAuditLog(row: any): AuditLogEntry {
+  const createdAtDate = row.created_at ? new Date(row.created_at) : new Date();
+  const timeFormatted = `${createdAtDate.toLocaleDateString('id-ID')} ${createdAtDate.toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })} WIB`;
+
+  return {
+    id: row.id ? String(row.id) : `LOG-${row.reference_no}`,
+    referenceNo: row.reference_no || 'TRX-UNKNOWN',
+    timestamp: timeFormatted,
+    actor: {
+      id: row.actor_username || 'usr-remote',
+      username: row.actor_username || 'unknown',
+      fullName: row.actor_name || row.actor_username || 'Pengguna',
+      role: (row.actor_role as UserRole) || 'Finance Staff',
+      ip: row.client_ip || '192.168.10.45',
+    },
+    transaction: {
+      recipientName: row.recipient_name || 'Rekening Operasional',
+      recipientAccount: row.recipient_account || '-',
+      bankName: row.bank_name || 'Bank',
+      amount: Number(row.amount) || 0,
+      department: row.department || 'Operations',
+      description: row.description || '',
+    },
+    status: (row.status as 'APPROVED' | 'DENIED' | 'PENDING') || 'PENDING',
+    mfaStatus: (row.mfa_status as any) || 'VERIFIED',
+    mfaMethod: row.mfa_method || undefined,
+    rbacPassed: true,
+    abacPassed: row.status === 'APPROVED',
+    primaryReason:
+      row.primary_reason ||
+      (row.status === 'APPROVED'
+        ? 'Otorisasi Berhasil: Lolos validasi kebijakan keamanan.'
+        : row.status === 'PENDING'
+        ? 'Memerlukan Approval: Nominal transaksi melebihi limit staf.'
+        : 'Ditolak: Pelanggaran kebijakan keamanan.'),
+    detailedViolations: Array.isArray(row.detailed_violations) ? row.detailed_violations : [],
+    escalatedToManager: Boolean(row.escalated_to_manager),
+    managerDecision: row.manager_decided_by
+      ? {
+          decidedBy: row.manager_decided_by,
+          decidedAt: row.manager_decided_at || new Date().toISOString(),
+          decision: (row.status as 'APPROVED' | 'DENIED') || 'APPROVED',
+          notes: row.primary_reason,
+        }
+      : undefined,
+    contextSnapshot: {
+      ip: row.client_ip || '192.168.10.45',
+      dayName: 'Hari Kerja',
+      timeWib: createdAtDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      allowedSubnet: '192.168.10.0/24',
+      allowedHours: '08:00–17:00 WIB',
+      roleLimit: row.actor_role === 'Finance Manager' ? 1000000000 : 50000000,
+    },
+  };
+}
+
+/**
+ * Fetch all transactions from Supabase public.transactions
+ */
+export async function fetchTransactionsFromSupabase(): Promise<{
+  success: boolean;
+  transactions: AuditLogEntry[];
+  message: string;
+  tableExists: boolean;
+}> {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      if (error.code === '42P01') {
+        return {
+          success: false,
+          tableExists: false,
+          transactions: [],
+          message: 'Tabel `public.transactions` belum dibuat di Supabase SQL Editor.',
+        };
+      }
+      return {
+        success: false,
+        tableExists: false,
+        transactions: [],
+        message: `Error Supabase (${error.code}): ${error.message}`,
+      };
+    }
+
+    const mapped = (data || []).map(mapRowToAuditLog);
+    return {
+      success: true,
+      tableExists: true,
+      transactions: mapped,
+      message: `Berhasil memuat ${mapped.length} data transaksi dari Supabase.`,
+    };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      tableExists: false,
+      transactions: [],
+      message: `Gagal memuat transaksi: ${errorMsg}`,
+    };
+  }
+}
+
+/**
+ * Subscribe to realtime changes on transactions table with fallback support
+ */
+export function subscribeToTransactions(
+  onChanged: (entry: AuditLogEntry, eventType: 'INSERT' | 'UPDATE' | 'DELETE') => void
+) {
+  try {
+    const channel = supabase
+      .channel('realtime_public_transactions')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const mapped = mapRowToAuditLog(payload.new);
+            onChanged(mapped, payload.eventType);
+          } else if (payload.eventType === 'DELETE') {
+            const dummyEntry: any = {
+              id: payload.old?.id || '',
+              referenceNo: payload.old?.reference_no || '',
+            };
+            onChanged(dummyEntry, 'DELETE');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  } catch (err) {
+    console.warn('Realtime subscription not available:', err);
+    return () => {};
+  }
+}
+

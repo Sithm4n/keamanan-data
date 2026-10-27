@@ -29,6 +29,7 @@ interface AuditLogViewerProps {
   onApprovePending?: (logId: string) => void;
   onDenyPending?: (logId: string) => void;
   onGoToTransaction?: () => void;
+  onRefresh?: () => void;
 }
 
 export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
@@ -40,6 +41,7 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
   onApprovePending,
   onDenyPending,
   onGoToTransaction,
+  onRefresh,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'APPROVED' | 'DENIED' | 'PENDING'>('ALL');
@@ -211,6 +213,26 @@ export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({
 
           {/* Action Buttons: Export & Reset */}
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Live Realtime Sync Status Badge */}
+            <div
+              title="Sinkronisasi otomatis dengan database Supabase secara realtime aktif di semua perangkat"
+              className="px-2.5 py-1.5 text-xs font-semibold bg-emerald-50 text-emerald-800 rounded-lg border border-emerald-300 flex items-center gap-1.5 whitespace-nowrap shadow-xs"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Realtime Sync</span>
+            </div>
+
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                title="Segarkan data audit log dari Supabase sekarang"
+                className="px-2.5 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-600" />
+                <span>Segarkan</span>
+              </button>
+            )}
+
             <button
               onClick={exportCsv}
               className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
